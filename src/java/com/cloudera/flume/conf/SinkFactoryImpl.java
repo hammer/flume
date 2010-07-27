@@ -50,6 +50,7 @@ import com.cloudera.flume.handlers.debug.ConsoleEventSink;
 import com.cloudera.flume.handlers.debug.DelayDecorator;
 import com.cloudera.flume.handlers.debug.FlakeyEventSink;
 import com.cloudera.flume.handlers.debug.InMemoryDecorator;
+import com.cloudera.flume.handlers.debug.InsistentAppendDecorator;
 import com.cloudera.flume.handlers.debug.InsistentOpenDecorator;
 import com.cloudera.flume.handlers.debug.IntervalDroppyEventSink;
 import com.cloudera.flume.handlers.debug.IntervalFlakeyEventSink;
@@ -158,6 +159,7 @@ public class SinkFactoryImpl extends SinkFactory {
 
       { "lazyOpen", LazyOpenDecorator.builder() },
       { "insistentOpen", InsistentOpenDecorator.builder() },
+      { "insistentAppend", InsistentAppendDecorator.builder() },
       { "stubbornAppend", StubbornAppendSink.builder() },
 
       // relational algebra projection
@@ -309,5 +311,19 @@ public class SinkFactoryImpl extends SinkFactory {
     } catch (IllegalArgumentException iae) {
       throw new FlumeArgException(iae.getMessage());
     }
+  }
+
+  /**
+   * This is only for testing
+   */
+  public void setSink(String name, SinkBuilder builder) {
+    sinks.put(name, builder);
+  }
+
+  /**
+   * This is only for testing
+   */
+  public void setDeco(String name, SinkDecoBuilder builder) {
+    decos.put(name, builder);
   }
 }

@@ -26,12 +26,12 @@ import org.apache.log4j.Logger;
 import com.cloudera.flume.conf.Context;
 import com.cloudera.flume.conf.FlumeConfiguration;
 import com.cloudera.flume.conf.SinkFactory.SinkDecoBuilder;
-import com.cloudera.flume.core.Attributes;
 import com.cloudera.flume.core.EventSink;
 import com.cloudera.flume.core.EventSinkDecorator;
 import com.cloudera.flume.reporter.ReportEvent;
 import com.cloudera.flume.reporter.Reportable;
 import com.cloudera.util.BackoffPolicy;
+import com.cloudera.util.CappedExponentialBackoff;
 import com.cloudera.util.CumulativeCappedExponentialBackoff;
 import com.cloudera.util.MultipleIOException;
 import com.google.common.base.Preconditions;
@@ -61,22 +61,38 @@ public class InsistentOpenDecorator<S extends EventSink> extends
   long openRetries; // # of times we tried to reopen
   long openGiveups; // # of times we gave up on waiting
 
-  public InsistentOpenDecorator(S s, long sleepCap, long initial,
-      long cumulativeCap) {
+  public InsistentOpenDecorator(S s, BackoffPolicy backoff) {
     super(s);
-    this.backoff =
-        new CumulativeCappedExponentialBackoff(initial, sleepCap, cumulativeCap);
-
+    this.backoff = backoff;
     this.openSuccesses = 0;
     this.openRetries = 0;
-
   }
 
   /**
-   * TODO(jon) This preserves old semantics, needs to change.
+   * Creates a deco that has subsink s, and after failure initially waits for
+   * 'initial' ms, exponentially backs off an individual sleep upto 'sleepCap'
+   * ms, and fails after total backoff time has reached 'cumulativeCap' ms.
    */
-  public InsistentOpenDecorator(S s, long max, long initial) {
-    this(s, max, initial, max);
+  public InsistentOpenDecorator(S s, long sleepCap, long initial,
+      long cumulativeCap) {
+    super(s);
+    this.backoff = new CumulativeCappedExponentialBackoff(initial, sleepCap,
+        cumulativeCap);
+
+    this.openSuccesses = 0;
+    this.openRetries = 0;
+  }
+
+  /**
+   * Creates a deco that has subsink s, and after failure initially waits for
+   * 'initial' ms, exponentially backs off an individual sleep upto 'sleepCap'
+   * ms. This has no cumulative cap and will never give up.
+   */
+  public InsistentOpenDecorator(S s, long sleepCap, long initial) {
+    super(s);
+    this.backoff = new CappedExponentialBackoff(initial, sleepCap);
+    this.openSuccesses = 0;
+    this.openRetries = 0;
   }
 
   @Override
@@ -90,12 +106,13 @@ public class InsistentOpenDecorator<S extends EventSink> extends
         super.open();
         openSuccesses++;
         backoff.reset(); // reset backoff counter;
-        LOG.info("Opened " + this + " on try " + attemptRetries);
+        LOG.info("Opened " + sink.getName() + " on try " + attemptRetries);
         return;
       } catch (IOException e) {
         long waitTime = backoff.sleepIncrement();
         LOG.info("open attempt " + attemptRetries + " failed, backoff ("
-            + waitTime + "ms) " + this, e);
+            + waitTime + "ms): " + e.getMessage());
+        LOG.debug(e.getMessage(), e);
         exns.add(e);
         backoff.backoff();
         try {
@@ -117,13 +134,13 @@ public class InsistentOpenDecorator<S extends EventSink> extends
       public EventSinkDecorator<EventSink> build(Context context,
           String... argv) {
         long initMs = FlumeConfiguration.get().getInsistentOpenInitBackoff();
+        long cumulativeMaxMs = FlumeConfiguration.get()
+            .getFailoverMaxCumulativeBackoff();
+        long maxMs = FlumeConfiguration.get().getFailoverMaxSingleBackoff();
 
         Preconditions.checkArgument(argv.length <= 3,
-            "usage: insistentOpen([max=maxint[,init=" + initMs
+            "usage: insistentOpen([max=" + maxMs + "[,init=" + initMs
                 + "[,cumulativeMax=maxint]]])");
-        // TODO (jon) change next two to config file param. 2B ms is along time.
-        long cumulativeMaxMs = Integer.MAX_VALUE;
-        long maxMs = Integer.MAX_VALUE;
 
         if (argv.length >= 1) {
           maxMs = Long.parseLong(argv[0]);
@@ -133,10 +150,14 @@ public class InsistentOpenDecorator<S extends EventSink> extends
         }
         if (argv.length == 3) {
           cumulativeMaxMs = Long.parseLong(argv[2]);
+          // This one can give up
+          return new InsistentOpenDecorator<EventSink>(null,
+              new CumulativeCappedExponentialBackoff(initMs, maxMs,
+                  cumulativeMaxMs));
         }
 
-        return new InsistentOpenDecorator<EventSink>(null, maxMs, initMs,
-            cumulativeMaxMs);
+        return new InsistentOpenDecorator<EventSink>(null,
+            new CappedExponentialBackoff(maxMs, initMs));
       }
 
     };
@@ -154,11 +175,11 @@ public class InsistentOpenDecorator<S extends EventSink> extends
     rpt.hierarchicalMerge(backoff.getName(), backoff.getReport());
 
     // counters
-    Attributes.setLong(rpt, A_REQUESTS, openRequests);
-    Attributes.setLong(rpt, A_ATTEMPTS, openAttempts);
-    Attributes.setLong(rpt, A_SUCCESSES, openSuccesses);
-    Attributes.setLong(rpt, A_RETRIES, openRetries);
-    Attributes.setLong(rpt, A_GIVEUPS, openGiveups);
+    rpt.setLongMetric(A_REQUESTS, openRequests);
+    rpt.setLongMetric(A_ATTEMPTS, openAttempts);
+    rpt.setLongMetric(A_SUCCESSES, openSuccesses);
+    rpt.setLongMetric(A_RETRIES, openRetries);
+    rpt.setLongMetric(A_GIVEUPS, openGiveups);
     return rpt;
   }
 }

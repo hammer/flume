@@ -15,30 +15,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.cloudera.flume.core;
+package com.cloudera.util.dirwatcher;
+
+import java.io.File;
 
 /**
- * This listener allows other objects to react when a connector starts, stops or
- * bails on an error.
+ * The dir watcher periodically looks at a directory and fires events based on
+ * changes to the contents of the directory. When actions on files have been
+ * detected these actions are fired.
  */
-public interface ConnectorListener {
-  public void fireStarted(Driver c);
+public interface DirChangeHandler {
+  /**
+   * File deleted or moved elsewhere.
+   */
+  void fileDeleted(File f);
 
-  public void fireStopped(Driver c);
+  /**
+   * File created/moved into this directory
+   */
+  void fileCreated(File f);
 
-  public void fireError(Driver c, Exception e);
-
-  public static class Base implements ConnectorListener {
-    @Override
-    public void fireError(Driver c, Exception e) {
-    }
-
-    @Override
-    public void fireStarted(Driver c) {
-    }
-
-    @Override
-    public void fireStopped(Driver c) {
-    }
-  }
 }

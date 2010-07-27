@@ -31,7 +31,7 @@ import com.cloudera.flume.conf.FlumeBuilder;
 import com.cloudera.flume.conf.FlumeConfiguration;
 import com.cloudera.flume.conf.FlumeSpecException;
 import com.cloudera.flume.conf.thrift.FlumeConfigData;
-import com.cloudera.flume.core.ConnectorListener;
+import com.cloudera.flume.core.DriverListener;
 import com.cloudera.flume.core.Driver;
 import com.cloudera.flume.core.EventSink;
 import com.cloudera.flume.core.EventSource;
@@ -70,7 +70,7 @@ public class LogicalNode implements Reportable {
   final static Logger LOG = Logger.getLogger(LogicalNode.class.getName());
 
   private FlumeConfigData lastGoodCfg;
-  private Driver connector; // the connector that pumps data from src to snk
+  private Driver driver; // the connector that pumps data from src to snk
   private EventSink snk; // current sink and source instances.
   private EventSource src;
   private NodeStatus state;
@@ -160,43 +160,35 @@ public class LogicalNode implements Reportable {
   private void loadNode(EventSource newSrc, EventSink newSnk)
       throws IOException {
 
-    if (connector != null) {
+    if (driver != null) {
       // stop the existing connector.
-      connector.stop();
+      driver.stop();
     }
 
     // this will be replaceable with multi-threaded queueing versions or other
     // mechanisms
-    connector = new DirectDriver("logicalNode " + nodeName, src, snk);
-    connector.registerListener(new ConnectorListener() {
+    driver = new DirectDriver("logicalNode " + nodeName, src, snk);
+    driver.registerListener(new DriverListener() {
       @Override
       public void fireError(Driver conn, Exception ex) {
-        LOG.info("Connector " + nodeName + "exited with error", ex);
-
+        LOG.info("Connector " + nodeName + " exited with error "
+            + ex.getMessage());
         try {
           conn.getSource().close();
+        } catch (IOException e) {
+          LOG.error("Error closing " + nodeName + " source: " + e.getMessage());
+        }
+
+        try {
           conn.getSink().close();
         } catch (IOException e) {
-          LOG.error("Error closing" + nodeName, e);
+          LOG.error("Error closing " + nodeName + " sink: " + e.getMessage());
         }
 
         nodeMsg = "Error: Connector on " + nodeName + " closed " + conn;
         LOG.info("Error: Connector  on " + nodeName + " closed " + conn);
 
-        // restart connection. (with proper decorators on a sink, this only
-        // happens when the source.next() fails)
-
-        LOG.warn("reloading last successful config: " + lastGoodCfg);
-        try {
-          // TODO (jon) write test case to verify that this doesn't cause
-          // deadlock.
-          loadConfig(lastGoodCfg);
-        } catch (Exception e) {
-          state.state = NodeState.ERROR;
-          LOG.error("reloading " + nodeName + " failed ", e);
-          nodeMsg = "reloading " + nodeName + " failed ";
-        }
-
+        state.state = NodeState.ERROR;
       }
 
       @Override
@@ -208,26 +200,30 @@ public class LogicalNode implements Reportable {
       @Override
       public void fireStopped(Driver c) {
 
+        NodeState next = NodeState.IDLE;
+
         try {
           c.getSource().close();
         } catch (IOException e) {
-          LOG.error(nodeName + ": error closing (ignoring))", e);
+          LOG.error(nodeName + ": error closing: " + e.getMessage());
+          next = NodeState.ERROR;
         }
 
         try {
           c.getSink().close();
         } catch (IOException e) {
-          LOG.error(nodeName + ": error closing (ignoring))", e);
+          LOG.error(nodeName + ": error closing: " + e.getMessage());
+          next = NodeState.ERROR;
         }
 
         LOG.info(nodeName + ": Connector stopped: " + c);
         nodeMsg = nodeName + ": Connector stopped: " + c;
-        state.state = NodeState.IDLE;
+        state.state = next;
       }
 
     });
     this.state.state = NodeState.ACTIVE;
-    connector.start();
+    driver.start();
     reconfigures.incrementAndGet();
   }
 
@@ -287,9 +283,12 @@ public class LogicalNode implements Reportable {
 
     openLoadNode(newSrc, newSnk);
 
+    // Since sources/sinks are lazy, we don't know if the config is good until
+    // the first append succeeds.
+
     // We have successfully opened the source and sinks for the config. We can
-    // mark this as the last good / successful config (which we try to reload if
-    // the source fails)
+    // mark this as the last good / successful config. It does not mean that
+    // this configuration will open without errors!
     this.lastGoodCfg = cfg;
 
     LOG.info("Node config sucessfully set to " + cfg);
@@ -333,7 +332,7 @@ public class LogicalNode implements Reportable {
   synchronized public void getReports(Map<String, ReportEvent> reports) {
     String phyName = FlumeNode.getInstance().getPhysicalNodeName();
     String rprefix = phyName + "." + getName() + ".";
-    
+
     if (snk != null) {
       snk.getReports(rprefix, reports);
     }
@@ -341,7 +340,7 @@ public class LogicalNode implements Reportable {
       src.getReports(rprefix, reports);
     }
   }
-  
+
   synchronized public ReportEvent getReport() {
     ReportEvent rpt = new ReportEvent(nodeName);
     rpt.setStringMetric("nodename", nodeName);
@@ -377,11 +376,23 @@ public class LogicalNode implements Reportable {
     return state;
   }
 
+  /**
+   * This is a synchronous close operation for the logical node.
+   */
   public void close() throws IOException {
-    if (connector != null) {
+    if (driver != null) {
       // stop the existing connector.
       nodeMsg = nodeName + "closing";
-      connector.stop();
+      driver.stop();
+      // wait for driver thread to end.
+
+      src.close();
+      snk.close();
+      try {
+        driver.join();
+      } catch (InterruptedException e) {
+        LOG.error("Unexpected interruption when closing logical node");
+      }
     }
 
   }

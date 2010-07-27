@@ -18,16 +18,21 @@
 
 package com.cloudera.flume.agent;
 
+import java.io.File;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import junit.framework.TestCase;
-
 import org.apache.log4j.Logger;
 import org.apache.thrift.transport.TTransportException;
+import org.junit.Test;
 
+import com.cloudera.flume.agent.diskfailover.NaiveFileFailoverManager;
+import com.cloudera.flume.agent.durability.NaiveFileWALManager;
 import com.cloudera.flume.conf.Context;
 import com.cloudera.flume.conf.FlumeBuilder;
 import com.cloudera.flume.conf.FlumeConfiguration;
@@ -46,11 +51,12 @@ import com.cloudera.flume.master.MasterAckManager;
 import com.cloudera.flume.master.StatusManager;
 import com.cloudera.flume.reporter.ReportEvent;
 import com.cloudera.util.Clock;
+import com.cloudera.util.FileUtil;
 
 /**
  * This tests error/exception handling mechanisms in on LogicalNode
  */
-public class TestFlumeNode extends TestCase {
+public class TestFlumeNode {
 
   public static Logger LOG = Logger.getLogger(TestFlumeNode.class);
 
@@ -62,7 +68,7 @@ public class TestFlumeNode extends TestCase {
    * problem and shows that progress can be made. loadNode only throws if open
    * fails.
    */
-
+  @Test
   public void testSurviveCloseException() throws IOException {
     LogicalNode node = new LogicalNode(new Context(), "test");
 
@@ -87,6 +93,7 @@ public class TestFlumeNode extends TestCase {
     node.openLoadNode(new CloseExnSource(), new NullSink());
   }
 
+  @Test
   public void testRestartNextException() throws Exception {
     LogicalNode node = new LogicalNode(new Context(), "test");
 
@@ -133,16 +140,14 @@ public class TestFlumeNode extends TestCase {
 
     // sleep so that we open-append-fail-close, open-append-fail-close
     // multiple times.
-    Clock.sleep(5000); // TODO (jon) replace with countdownlatch
+    Clock.sleep(1000); // TODO (jon) replace with countdownlatch
 
     System.out.printf("next called %d times", count.get());
     System.out.flush();
-    // node.close(); // this is a differetn testnow
-
-    // successful if open-append-close has been done many times.
-    assertTrue(count.get() > 1);
+    assertEquals(1, count.get());
   }
 
+  @Test
   public void testFailfastOutException() throws IOException {
     LogicalNode node = new LogicalNode(new Context(), "test");
 
@@ -172,6 +177,7 @@ public class TestFlumeNode extends TestCase {
    * This tests to make sure that openLoadNode opens newly specified sources,
    * and closes previous sources when a new one is specified.
    */
+  @Test
   public void testOpenCloseOpenIsOpen() throws IOException {
     class IsOpenSource extends EventSource.Base {
       boolean isOpen = false;
@@ -216,6 +222,7 @@ public class TestFlumeNode extends TestCase {
    * source is opened and the old sink is closed. (and no resource contention
    * IOExceptions are triggered.
    */
+  @Test
   public void testOpenCloseSyslogTcpSourceThreads() throws IOException {
     LogicalNode node = new LogicalNode(new Context(), "test");
     EventSource prev = new SyslogTcpSourceThreads(6789);
@@ -233,6 +240,7 @@ public class TestFlumeNode extends TestCase {
    * up. Then it closes, down and does so again, demonstrating that a node will
    * reconnect
    */
+  @Test
   public void testFlumeNodeReconnect() throws TTransportException, IOException,
       InterruptedException {
 
@@ -272,5 +280,40 @@ public class TestFlumeNode extends TestCase {
     fm2.shutdown();
     LOG.info("flume master 2 closed");
 
+  }
+
+  /**
+   * This verify that all logical nodes have their WAL/DFO logging in the proper
+   * directory
+   * 
+   * @throws IOException
+   */
+  @Test
+  public void testLogDirsCorrect() throws IOException {
+    FlumeConfiguration cfg = FlumeConfiguration.createTestableConfiguration();
+    Clock.resetDefault();
+    // Set directory of webapps to build-specific dir
+    cfg.set(FlumeConfiguration.WEBAPPS_PATH, "build/webapps");
+    // Doesn't matter whether or not we use ZK - use memory for speed
+    cfg.set(FlumeConfiguration.MASTER_STORE, "memory");
+
+    File tmpdir = FileUtil.mktempdir();
+    cfg.set(FlumeConfiguration.AGENT_LOG_DIR_NEW, tmpdir.getAbsolutePath());
+
+    FlumeMaster master = FlumeMaster.getInstance();
+    FlumeNode node = new FlumeNode(cfg, "foo", new DirectMasterRPC(master),
+        false, false);
+
+    node.getAddDFOManager("foo").open();
+    node.getAddWALManager("foo").open();
+
+    File defaultDir = new File(new File(cfg.getAgentLogsDir()), node
+        .getPhysicalNodeName());
+    File walDir = new File(defaultDir, NaiveFileWALManager.WRITINGDIR);
+    assertTrue(walDir.isDirectory());
+
+    File dfoDir = new File(defaultDir, NaiveFileFailoverManager.WRITINGDIR);
+    assertTrue(dfoDir.isDirectory());
+    FileUtil.rmr(tmpdir);
   }
 }

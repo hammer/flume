@@ -43,6 +43,7 @@ import com.cloudera.flume.handlers.scribe.ScribeEventSource;
 import com.cloudera.flume.handlers.syslog.SyslogTcpSource;
 import com.cloudera.flume.handlers.syslog.SyslogTcpSourceThreads;
 import com.cloudera.flume.handlers.syslog.SyslogUdpSource;
+import com.cloudera.flume.handlers.text.TailDirSource;
 import com.cloudera.flume.handlers.text.TailSource;
 import com.cloudera.flume.handlers.thrift.PrioritizedThriftEventSource;
 import com.cloudera.flume.handlers.thrift.ThriftEventSource;
@@ -71,6 +72,7 @@ public class SourceFactoryImpl extends SourceFactory {
       { "tSource", ThriftEventSource.builder() },
       { "text", TextFileSource.builder() }, { "tail", TailSource.builder() },
       { "multitail", TailSource.multiTailBuilder() },
+      { "tailDir", TailDirSource.builder() },
       { "seqfile", SeqfileEventSource.builder() },
       { "syslogUdp", SyslogUdpSource.builder() },
       { "syslogTcp", SyslogTcpSourceThreads.builder() },
@@ -159,6 +161,14 @@ public class SourceFactoryImpl extends SourceFactory {
     } catch (ClassNotFoundException e) {
       LOG.error("Could not find class " + clsName + " for plugin loading", e);
     }
+  }
+
+  /**
+   * This is for testing only. It allows us to add arbitrary sources to the
+   * builder.
+   */
+  public void setSource(String name, SourceBuilder builder) {
+    sources.put(name, builder);
   }
 
 }

@@ -362,7 +362,8 @@ public class FlumeBuilder {
     ASTNODE type = ASTNODE.valueOf(t.getText()); // convert to enum
     switch (type) {
     case SOURCE: {
-      List<CommonTree> children = (List<CommonTree>) t.getChildren();
+      List<CommonTree> children = new ArrayList<CommonTree>(
+          (List<CommonTree>) t.getChildren());
       CommonTree source = children.remove(0);
       String sourceType = source.getText();
       List<String> args = new ArrayList<String>();
@@ -570,7 +571,7 @@ public class FlumeBuilder {
       String body = FlumeSpecGen.genEventSink(ctbody);
       FlumeConfiguration conf = FlumeConfiguration.get();
       FailoverChainSink failchain = new FailoverChainSink(context, body, rargs,
-          conf.getFailoverInitialBackoff(), conf.getFailoverMaxBackoff());
+          conf.getFailoverInitialBackoff(), conf.getFailoverMaxSingleBackoff());
       return failchain;
     }
       // TODO (jon) new feature: handle pattern match splitter
