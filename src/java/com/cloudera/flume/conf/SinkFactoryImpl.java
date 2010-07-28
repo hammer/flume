@@ -66,7 +66,6 @@ import com.cloudera.flume.handlers.hdfs.CustomDfsSink;
 import com.cloudera.flume.handlers.hdfs.DFSEventSink;
 import com.cloudera.flume.handlers.hdfs.EscapedCustomDfsSink;
 import com.cloudera.flume.handlers.hdfs.SeqfileEventSink;
-import com.cloudera.flume.handlers.http.HttpPostSink;
 import com.cloudera.flume.handlers.irc.IrcSink;
 import com.cloudera.flume.handlers.syslog.SyslogTcpSink;
 import com.cloudera.flume.handlers.thrift.ThriftAckedEventSink;
@@ -127,7 +126,6 @@ public class SinkFactoryImpl extends SinkFactory {
       { "rpcSink", ThriftEventSink.builder() },
       { "syslogTcp", SyslogTcpSink.builder() },
       { "irc", IrcSink.builder() },
-      { "httpPost", HttpPostSink.builder() },
 
       // advanced
       { "failChain", FailoverChainSink.builder() }, // @deprecated

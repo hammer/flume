@@ -22,20 +22,15 @@ import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
-
-import org.apache.log4j.Logger;
+import java.util.ArrayList;
+import java.util.List;
 
 import com.cloudera.flume.conf.Context;
-import com.cloudera.flume.conf.FlumeSpecException;
 import com.cloudera.flume.conf.SinkFactory.SinkBuilder;
-import com.cloudera.flume.core.Attributes;
 import com.cloudera.flume.core.Event;
 import com.cloudera.flume.core.EventSink;
-import com.cloudera.flume.handlers.text.FormatFactory;
-import com.cloudera.flume.handlers.text.output.DebugOutputFormat;
-import com.cloudera.flume.handlers.text.output.OutputFormat;
-import com.cloudera.flume.handlers.text.output.RawOutputFormat;
 import com.cloudera.flume.reporter.ReportEvent;
+import com.cloudera.util.Pair;
 import com.google.common.base.Preconditions;
 
 /**
@@ -44,32 +39,34 @@ import com.google.common.base.Preconditions;
  * is used.
  */
 public class HttpPostSink extends EventSink.Base {
-  final static Logger LOG = Logger.getLogger(HttpPostSink.class.getName());
-
   String serverAddress = null;
-  final OutputFormat fmt;
+  String paramWithData = null;
+  String userCookie = null;
   long count = 0;
 
-  public HttpPostSink(String serverAddress) {
-    this(serverAddress, null);
+  public HttpPostSink(String serverAddress, String paramWithData) {
+    this(serverAddress, paramWithData, "");
   }
 
-  public HttpPostSink(String serverAddress, OutputFormat fmt) {
+  public HttpPostSink(String serverAddress, String paramWithData, String userCookie) {
     this.serverAddress = serverAddress;
-    this.fmt = (fmt == null) ? new RawOutputFormat() : fmt;
+    this.paramWithData = paramWithData;
+    this.userCookie = userCookie;
   }
 
   @Override
   synchronized public void append(Event e) throws IOException {
     // Construct data
-    String messageData = URLEncoder.encode("body", "UTF-8") + "=" + URLEncoder.encode(new String(e.getBody()), "UTF-8");
-    String userCookie = "user=flume";
+    String messageData = URLEncoder.encode(this.paramWithData, "UTF-8") + "=" + URLEncoder.encode(new String(e.getBody()), "UTF-8");
+    //String userCookie = "user=flume";
 
     // Send data
     URL serverURL = new URL(this.serverAddress);
     HttpURLConnection connection = (HttpURLConnection) serverURL.openConnection();
     connection.setDoOutput(true);
-    connection.setRequestProperty("Cookie", userCookie);
+    if (this.userCookie != "") {
+      connection.setRequestProperty("Cookie", this.userCookie);
+    }
     connection.setRequestMethod("POST");
     OutputStreamWriter wr = new OutputStreamWriter(connection.getOutputStream());
     wr.write(messageData);
@@ -94,7 +91,7 @@ public class HttpPostSink extends EventSink.Base {
   @Override
   synchronized public ReportEvent getReport() {
     ReportEvent rpt = super.getReport();
-    Attributes.setLong(rpt, ReportEvent.A_COUNT, count);
+    rpt.setLongMetric(ReportEvent.A_COUNT, count);
     return rpt;
   }
 
@@ -102,21 +99,27 @@ public class HttpPostSink extends EventSink.Base {
     return new SinkBuilder() {
       @Override
       public EventSink build(Context context, String... args) {
-        Preconditions.checkArgument(args.length >= 1 && args.length <= 2,
-            "usage: httpPost(url[,format])");
-        OutputFormat fmt = new DebugOutputFormat();
-        if (args.length >= 2) {
-          try {
-            fmt = FormatFactory.get().getOutputFormat(args[1]);
-          } catch (FlumeSpecException e) {
-            LOG.error("Illegal output format " + args[1], e);
-            throw new IllegalArgumentException("Illegal output format"
-                + args[1]);
-
-          }
-        }
-        return new HttpPostSink(args[0], fmt);
+        Preconditions.checkArgument(args.length >= 2 && args.length <= 3,
+            "usage: httpPost(url, param[, cookie])");
+        String serverAddress = args[0];
+        String paramWithData = args[1];
+        if (args.length ==2) {
+	  return new HttpPostSink(serverAddress, paramWithData);
+	} else {
+          String userCookie = args[2];
+	  return new HttpPostSink(serverAddress, paramWithData, userCookie);
+	}
       }
     };
+  }
+
+  /**
+   * This is a special function used by the SourceFactory to pull in this class
+   * as a plugin sink.
+   */
+  public static List<Pair<String, SinkBuilder>> getSinkBuilders() {
+    List<Pair<String, SinkBuilder>> builders = new ArrayList<Pair<String, SinkBuilder>>();
+    builders.add(new Pair<String, SinkBuilder>("httpPost", builder()));
+    return builders;
   }
 }
